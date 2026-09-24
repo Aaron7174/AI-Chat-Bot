@@ -1,0 +1,26 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="head" x1="70" y1="50" x2="260" y2="285" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10131D"/>
+      <stop offset="1" stop-color="#05060A"/>
+    </linearGradient>
+    <radialGradient id="node" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(8 8) rotate(90) scale(16)">
+      <stop stop-color="#DDE5FF"/>
+      <stop offset="0.42" stop-color="#687DDA"/>
+      <stop offset="1" stop-color="#171A2C"/>
+    </radialGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <path d="M91 274C78 262 72 237 73 210C39 186 33 139 50 101C67 62 105 39 151 39C218 39 268 82 269 143C270 172 258 196 246 218C239 231 236 245 237 274H91Z" fill="url(#head)" stroke="#7184CE" stroke-opacity=".45" stroke-width="2"/>
+  <path d="M78 184C59 174 51 158 55 141C59 124 71 111 88 103" stroke="#7287E2" stroke-opacity=".7" stroke-width="3" stroke-linecap="round"/>
+  <g filter="url(#glow)" fill="url(#node)" stroke="#C9D3FF" stroke-opacity=".65" stroke-width="2">
+    <circle cx="135" cy="91" r="17"/><circle cx="193" cy="88" r="13"/><circle cx="113" cy="139" r="10"/>
+    <circle cx="165" cy="132" r="15"/><circle cx="217" cy="137" r="11"/><circle cx="139" cy="181" r="16"/>
+    <circle cx="194" cy="181" r="10"/><circle cx="224" cy="215" r="14"/><circle cx="151" cy="226" r="12"/>
+    <circle cx="106" cy="218" r="8"/><circle cx="181" cy="251" r="9"/><circle cx="116" cy="169" r="6"/>
+  </g>
+  <path d="M135 91L165 132L139 181L151 226M193 88L165 132L217 137M139 181L194 181L224 215M106 218L139 181L181 251" stroke="#8498F1" stroke-opacity=".32" stroke-width="2"/>
+</svg>
