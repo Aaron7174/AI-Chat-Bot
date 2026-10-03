@@ -1,4 +1,6 @@
-function ChatMessage({ message }) {
+import { Link } from 'react-router-dom';
+
+function ChatMessage({ message, messageIndex, onSuggestion, onConfirmAttendance, onCancelAttendance }) {
   const isUser = message.sender === 'user';
 
   return (
@@ -17,12 +19,28 @@ function ChatMessage({ message }) {
           </div>
         )}
 
-        {message.data && message.type === 'department_summary' && (
-          <div className="department-summary-card">
-            <div><span>Employees</span><strong>{message.data.employees}</strong></div>
-            <div><span>Average salary</span><strong>{message.data.averageSalary}</strong></div>
-            <div><span>Locations</span><strong>{message.data.locations.length}</strong></div>
+        {message.attendanceSummary && (
+          <div className="chat-stats-grid">
+            {[
+              ['Status', message.attendanceSummary.status],
+              ['Worked', `${Math.floor((message.attendanceSummary.workingMinutes || 0) / 60)}h ${(message.attendanceSummary.workingMinutes || 0) % 60}m`],
+              ['Late minutes', message.attendanceSummary.lateMinutes || 0],
+              ['Overtime minutes', message.attendanceSummary.overtimeMinutes || 0],
+            ].map(([label, value]) => <div className="chat-stat-card" key={label}><span>{label}</span><strong>{value}</strong></div>)}
           </div>
+        )}
+
+        {message.attendanceAction && (
+          <div className="chat-followups" aria-label="Confirm attendance action">
+            <button type="button" onClick={() => onConfirmAttendance?.(message.attendanceAction)}>
+              Confirm {message.attendanceAction === 'CHECK_IN' ? 'check-in' : 'check-out'}
+            </button>
+            <button type="button" onClick={() => onCancelAttendance?.(messageIndex)}>Cancel</button>
+          </div>
+        )}
+
+        {message.attendanceUrl && (
+          <Link className="chat-directory-link" to={message.attendanceUrl}>Open attendance <span aria-hidden="true">→</span></Link>
         )}
 
         {message.employees && message.employees.length > 0 && (
@@ -30,20 +48,36 @@ function ChatMessage({ message }) {
             {message.employees.map((employee) => (
               <div className="chat-employee-item" key={employee.id}>
                 <div className="employee-card-heading">
-                  <span className="chat-avatar">{employee.name.slice(0, 1)}</span>
+                  <span className="chat-avatar">{(employee.name || '?').slice(0, 1).toUpperCase()}</span>
                   <div>
-                    <h4>{employee.name}</h4>
-                    <p>{employee.role}</p>
+                    <h4>{employee.name || 'Unnamed employee'}</h4>
+                    <p>{employee.role || 'Role not specified'}</p>
                   </div>
                 </div>
                 <div className="employee-card-meta">
-                  <span>{employee.department}</span>
-                  <span>{employee.location}</span>
+                  <span>{employee.department || 'Department not set'}</span>
+                  <span>{employee.location || 'Location not set'}</span>
                 </div>
                 <div className="employee-skill-row">
-                  {employee.skills.slice(0, 4).map((skill) => <span key={skill}>{skill}</span>)}
+                  {(employee.skills || []).slice(0, 4).map((skill) => <span key={skill}>{skill}</span>)}
                 </div>
+                {employee.status && <small className="chat-employee-status">{employee.status.replace('_', ' ')}</small>}
+                <Link className="chat-profile-link" to={`/employee/${employee.id}`}>Open profile <span aria-hidden="true">→</span></Link>
               </div>
+            ))}
+          </div>
+        )}
+
+        {message.hasMore && message.directoryUrl && (
+          <Link className="chat-directory-link" to={message.directoryUrl}>
+            Browse all {message.total} matches <span aria-hidden="true">→</span>
+          </Link>
+        )}
+
+        {!isUser && message.suggestions?.length > 0 && onSuggestion && (
+          <div className="chat-followups" aria-label="Suggested questions">
+            {message.suggestions.slice(0, 3).map((suggestion) => (
+              <button key={suggestion} type="button" onClick={() => onSuggestion(suggestion)}>{suggestion}</button>
             ))}
           </div>
         )}

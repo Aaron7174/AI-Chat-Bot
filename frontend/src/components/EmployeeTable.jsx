@@ -19,6 +19,7 @@ function EmployeeTable({ employees, loading, canEdit = false, canDelete = false,
             <th>Department</th>
             <th>Category</th>
             <th>Role</th>
+            <th>Status</th>
             <th>Email</th>
             <th>Location</th>
             <th>Actions</th>
@@ -32,6 +33,7 @@ function EmployeeTable({ employees, loading, canEdit = false, canDelete = false,
               <td>{employee.department}</td>
               <td>{employee.category}</td>
               <td>{employee.designation || employee.role}</td>
+              <td><span className={`employee-status-pill ${(employee.status || 'ACTIVE').toLowerCase().replace('_', '-')}`}>{(employee.status || 'ACTIVE').replace('_', ' ')}</span></td>
               <td>{employee.email}</td>
               <td>{employee.location}</td>
               <td>

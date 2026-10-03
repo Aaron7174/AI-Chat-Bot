@@ -1,9 +1,16 @@
 const jwt = require('jsonwebtoken');
-const { findUserById, toPublicUser } = require('../data/users');
+const { findUserById } = require('../services/userService');
+const { toPublicUser } = require('../data/users');
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'development-only-companyai-secret';
+const getJwtSecret = () => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET must be configured before starting the API.');
+  }
 
-const authenticate = (req, res, next) => {
+  return process.env.JWT_SECRET;
+};
+
+const authenticate = async (req, res, next) => {
   const authorization = req.get('authorization') || '';
   const [scheme, token] = authorization.split(' ');
 
@@ -14,10 +21,18 @@ const authenticate = (req, res, next) => {
     });
   }
 
+  let payload;
   try {
-    const payload = jwt.verify(token, getJwtSecret());
-    const user = findUserById(payload.userId);
+    payload = jwt.verify(token, getJwtSecret());
+  } catch {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required',
+    });
+  }
 
+  try {
+    const user = await findUserById(payload.userId);
     if (!user || !user.isActive) {
       return res.status(401).json({
         success: false,
@@ -28,10 +43,7 @@ const authenticate = (req, res, next) => {
     req.user = toPublicUser(user);
     return next();
   } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: 'Authentication required',
-    });
+    return next(error);
   }
 };
 

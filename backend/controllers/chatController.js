@@ -1,304 +1,368 @@
 const {
-  getAllEmployees,
-  getEmployeesByCategory,
-  getEmployeesByDepartment,
-  getEmployeeById,
-  searchEmployeesByName,
-  searchEmployees,
-  getDepartmentSummary,
+  findEmployee,
+  queryEmployees,
   getDepartmentStats,
 } = require('../services/employeeService');
+const { parseChatIntent } = require('../services/chatIntentService');
+const {
+  buildRegister,
+  checkIn,
+  checkOut,
+  getOwnHistory,
+  getToday,
+} = require('../services/attendanceService');
 
-const departmentMap = {
-  hr: 'HR',
-  humanresources: 'HR',
-  finance: 'Finance',
-  marketing: 'Marketing',
-  sales: 'Sales',
-  operations: 'Operations',
-  admin: 'Admin',
-  it: 'IT',
+const suggestionsByRole = {
+  ADMIN: [
+    'Show all employees',
+    'Show IT employees',
+    'Find employees with React skills',
+    'How many employees are in HR?',
+  ],
+  HR: [
+    'Show all employees',
+    'Show Non-IT employees',
+    'Find an employee by name',
+    'How many employees are in IT?',
+    'Who has not checked in today?',
+    'Show HR department attendance',
+  ],
+  EMPLOYEE: ['Show my profile', 'What is my attendance today?', 'How many hours did I work today?', 'What is my attendance percentage?', 'Check in now'],
 };
 
-const normalizeMessage = (message) => message.trim().toLowerCase();
+const toChatEmployee = (employee) => ({
+  id: employee.id,
+  employeeId: employee.employeeId,
+  name: employee.name,
+  department: employee.department,
+  category: employee.category || employee.employeeType,
+  role: employee.designation || employee.role,
+  location: employee.location,
+  email: employee.email,
+  status: employee.status || employee.employmentStatus || 'ACTIVE',
+  joiningDate: employee.joiningDate,
+  skills: Array.isArray(employee.skills) ? employee.skills : [],
+});
 
-const suggestions = [
-  'Show today\'s company summary',
-  'Find employees with React skills',
-  'Give me an IT department summary',
-  'How many employees are in Chennai?',
-];
-
-const extractDepartment = (message) => {
-  const lowerMessage = normalizeMessage(message);
-
-  for (const key of Object.keys(departmentMap)) {
-    if (lowerMessage.includes(key)) {
-      return departmentMap[key];
-    }
-  }
-
-  return null;
+const parseLimit = (value) => {
+  const requested = Number(value);
+  return Number.isInteger(requested) ? Math.min(10, Math.max(1, requested)) : 5;
 };
 
-const handleChatRequest = (req, res) => {
+const formatAttendanceTime = (value, timeZone) => value
+  ? new Intl.DateTimeFormat('en-IN', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  : 'not recorded';
+
+const handleChatRequest = async (req, res) => {
   try {
     const message = req.body && req.body.message ? req.body.message : '';
 
-    if (!message || !message.trim()) {
+    if (typeof message !== 'string' || !message.trim() || message.length > 500) {
       return res.status(400).json({
         success: false,
-        message: 'Please enter a valid question.',
+        message: 'Please enter a message between 1 and 500 characters.',
       });
     }
 
-    const lowerMessage = normalizeMessage(message);
-    const allEmployees = getAllEmployees();
-
-    if (lowerMessage.includes('company summary') || lowerMessage.includes('dashboard summary') || lowerMessage.includes('how many employees do we have')) {
-      const itCount = getEmployeesByCategory('it').length;
-      const nonITCount = getEmployeesByCategory('non-it').length;
-      const departments = getDepartmentStats();
+    if (req.body?.confirmAction) {
+      if (!req.user.permissions.includes('VIEW_OWN_ATTENDANCE')) {
+        return res.status(403).json({ success: false, message: 'You do not have permission to manage your attendance.' });
+      }
+      const action = String(req.body.confirmAction).toUpperCase();
+      if (!['CHECK_IN', 'CHECK_OUT'].includes(action)) {
+        return res.status(400).json({ success: false, message: 'Unsupported attendance action.' });
+      }
+      const attendance = action === 'CHECK_IN'
+        ? await checkIn({ user: req.user, source: 'CHATBOT', ipAddress: req.ip })
+        : await checkOut({ user: req.user, source: 'CHATBOT', ipAddress: req.ip });
       return res.json({
-        reply: 'Here is the current CompanyAI workforce snapshot.',
-        type: 'statistics',
-        data: departments,
-        stats: [
-          { label: 'Total employees', value: allEmployees.length },
-          { label: 'IT employees', value: itCount },
-          { label: 'Non-IT employees', value: nonITCount },
-          { label: 'Departments', value: departments.length },
-        ],
-        employees: [],
-        suggestions,
+        success: true,
+        reply: action === 'CHECK_IN'
+          ? `Check-in recorded for ${attendance.employee.name}.`
+          : `Check-out recorded for ${attendance.employee.name}.`,
+        attendanceSummary: {
+          status: attendance.status,
+          checkIn: attendance.checkIn,
+          checkOut: attendance.checkOut,
+          workingMinutes: attendance.workingMinutes,
+          lateMinutes: attendance.lateMinutes,
+          overtimeMinutes: attendance.overtimeMinutes,
+        },
+        suggestions: suggestionsByRole[req.user.role] || [],
+        intent: action,
       });
     }
 
-    const skillMatch = lowerMessage.match(/(?:with|know|knows|having)\s+([a-z0-9+#.\-/]+)\s+skills?/i)
-      || lowerMessage.match(/(?:skill|skills)\s*:\s*([a-z0-9+#.\-/]+)/i);
-    const knownSkills = [...new Set(allEmployees.flatMap((employee) => employee.skills))];
-    const detectedSkill = skillMatch
-      ? knownSkills.find((skill) => skill.toLowerCase() === skillMatch[1].toLowerCase())
-      : knownSkills.find((skill) => lowerMessage.includes(skill.toLowerCase()));
-
-    if (detectedSkill) {
-      const results = searchEmployees({ skill: detectedSkill });
-      return res.json({
-        reply: `I found ${results.length} employees with ${detectedSkill} skills.`,
-        type: 'employee_list',
-        data: results,
-        employees: results,
-        suggestions,
-      });
-    }
-
-    const knownLocations = [...new Set(allEmployees.map((employee) => employee.location))];
-    const detectedLocation = knownLocations.find((location) => lowerMessage.includes(location.toLowerCase()));
-    if (detectedLocation && (lowerMessage.includes('employee') || lowerMessage.includes('people') || lowerMessage.includes('staff') || lowerMessage.includes('how many'))) {
-      const results = searchEmployees({ location: detectedLocation });
-      return res.json({
-        reply: `There are ${results.length} employees in ${detectedLocation}.`,
-        type: 'employee_list',
-        data: results,
-        employees: results,
-        suggestions,
-      });
-    }
-
-    if (lowerMessage.includes('department summary') || lowerMessage.includes('department has the most')) {
-      const department = extractDepartment(lowerMessage) || getDepartmentStats()[0].department;
-      const summary = getDepartmentSummary(department);
-      return res.json({
-        reply: `${department} currently has ${summary.employees} employees with an average salary of ${summary.averageSalary}.`,
-        type: 'department_summary',
-        data: summary,
-        employees: [],
-        suggestions,
-      });
-    }
-
-    if (
-      lowerMessage.includes('show all employees') ||
-      lowerMessage.includes('list employees') ||
-      lowerMessage.includes('all employees') ||
-      lowerMessage.includes('show everyone')
-    ) {
-      return res.json({
-        reply: 'Here are all employees.',
-        type: 'employee_list',
-        data: allEmployees,
-        employees: allEmployees,
-        suggestions,
-      });
-    }
-
-    if (
-      (lowerMessage.includes('how many employees') || lowerMessage.includes('total employees')) &&
-      !lowerMessage.includes('it') &&
-      !lowerMessage.includes('non')
-    ) {
-      return res.json({
-        reply: `There are ${allEmployees.length} employees in total.`,
-        type: 'statistics',
-        stats: [{ label: 'Total employees', value: allEmployees.length }],
-        employees: [],
-        suggestions,
-      });
-    }
-
-    if (
-      lowerMessage.includes('it employees') ||
-      lowerMessage.includes('it staff') ||
-      lowerMessage.includes('software developers') ||
-      lowerMessage.includes('developers') ||
-      lowerMessage.includes('who works in it') ||
-      lowerMessage.includes('show it people') ||
-      lowerMessage.includes('show it team')
-    ) {
-      const itEmployees = getEmployeesByCategory('it');
-      return res.json({
-        reply: `I found ${itEmployees.length} IT employees.`,
-        type: 'employee_list',
-        data: itEmployees,
-        employees: itEmployees,
-        suggestions,
-      });
-    }
-
-    if (
-      lowerMessage.includes('non it employees') ||
-      lowerMessage.includes('non-it employees') ||
-      lowerMessage.includes('non it') ||
-      lowerMessage.includes('non-it') ||
-      lowerMessage.includes('who works in hr') ||
-      lowerMessage.includes('hr employees') ||
-      lowerMessage.includes('finance employees') ||
-      lowerMessage.includes('marketing employees') ||
-      lowerMessage.includes('sales employees') ||
-      lowerMessage.includes('admin employees') ||
-      lowerMessage.includes('operations employees')
-    ) {
-      const department = extractDepartment(lowerMessage);
-
-      if (department && department !== 'IT') {
-        const results = getEmployeesByDepartment(department);
+    const suggestions = suggestionsByRole[req.user.role] || [];
+    const departments = (await getDepartmentStats()).map((item) => item.department).filter(Boolean);
+    const parsedIntent = parseChatIntent(message, departments);
+    const attendanceIntents = [
+      'CHECK_IN',
+      'CHECK_OUT',
+      'ATTENDANCE_CORRECTION',
+      'ATTENDANCE_TODAY',
+      'ATTENDANCE_HISTORY',
+      'ATTENDANCE_PERCENTAGE',
+      'WORKING_HOURS',
+      'LATE_STATUS',
+      'OVERTIME',
+      'DEPARTMENT_ATTENDANCE',
+      'MISSING_CHECKOUT',
+      'ATTENDANCE_UNRESOLVED',
+    ];
+    if (attendanceIntents.includes(parsedIntent.intent)) {
+      if (['CHECK_IN', 'CHECK_OUT'].includes(parsedIntent.intent)) {
+        if (!req.user.permissions.includes('VIEW_OWN_ATTENDANCE')) {
+          return res.status(403).json({ success: false, message: 'You do not have permission to manage your attendance.' });
+        }
         return res.json({
-          reply: `Here are the ${department} employees.`,
-          type: 'employee_list',
-          data: results,
-          employees: results,
+          success: true,
+          reply: `Please confirm that you want to ${parsedIntent.intent === 'CHECK_IN' ? 'check in' : 'check out'} now. The server will record the time when you confirm.`,
+          attendanceAction: parsedIntent.intent,
           suggestions,
+          intent: parsedIntent.intent,
         });
       }
 
-      const nonITEmployees = getEmployeesByCategory('non-it');
+      if (parsedIntent.intent === 'ATTENDANCE_CORRECTION') {
+        if (!req.user.permissions.includes('VIEW_OWN_ATTENDANCE')) {
+          return res.status(403).json({ success: false, message: 'You can only request corrections for your own attendance.' });
+        }
+        return res.json({
+          success: true,
+          reply: 'I will not invent or directly edit a timestamp. Open Attendance to submit the date, requested check-in/check-out time, and reason for HR review.',
+          attendanceUrl: '/attendance',
+          suggestions,
+          intent: parsedIntent.intent,
+        });
+      }
+
+      if (['DEPARTMENT_ATTENDANCE', 'MISSING_CHECKOUT', 'ATTENDANCE_UNRESOLVED'].includes(parsedIntent.intent)) {
+        if (!req.user.permissions.includes('VIEW_ATTENDANCE')) {
+          return res.status(403).json({ success: false, message: 'You can only access your own attendance information.' });
+        }
+        const register = await buildRegister({
+          department: parsedIntent.query.department,
+          status: parsedIntent.intent === 'MISSING_CHECKOUT'
+            ? 'MISSED_CHECKOUT'
+            : parsedIntent.intent === 'ATTENDANCE_UNRESOLVED'
+              ? 'MISSING_ATTENDANCE'
+              : undefined,
+          page: 1,
+          limit: 10,
+        });
+        const relevantRecords = parsedIntent.intent === 'DEPARTMENT_ATTENDANCE'
+          ? register.records
+          : register.records.filter((record) => record.status === (parsedIntent.intent === 'MISSING_CHECKOUT' ? 'MISSED_CHECKOUT' : 'MISSING_ATTENDANCE'));
+        const stats = Object.entries(register.counts)
+          .filter(([label]) => label !== 'totalEmployees')
+          .map(([label, value]) => ({ label: label.replaceAll('_', ' '), value }));
+        const description = parsedIntent.intent === 'MISSING_CHECKOUT'
+          ? `${register.counts.MISSED_CHECKOUT || 0} employees with a recorded missed checkout.`
+          : parsedIntent.intent === 'ATTENDANCE_UNRESOLVED'
+            ? `${register.counts.MISSING_ATTENDANCE || 0} active employees have unresolved attendance. These are not automatically marked absent.`
+            : `Attendance summary for ${parsedIntent.query.department}: ${register.counts.totalEmployees} active employees.`;
+        return res.json({
+          success: true,
+          reply: description,
+          employees: relevantRecords.slice(0, 5).map((record) => ({
+            id: record.employee.id,
+            employeeId: record.employee.employeeId,
+            name: record.employee.name,
+            department: record.employee.department,
+            status: record.status,
+          })),
+          stats,
+          attendanceUrl: '/attendance',
+          suggestions,
+          intent: parsedIntent.intent,
+        });
+      }
+
+      const requestsOwnAttendance = req.user.role === 'EMPLOYEE' || /\b(my|mine|me|i|am i)\b/i.test(message);
+      const canReadOwnAttendance = req.user.permissions.includes('VIEW_OWN_ATTENDANCE')
+        && Boolean(req.user.employeeRecordId)
+        && requestsOwnAttendance;
+      if (!canReadOwnAttendance) {
+        if (requestsOwnAttendance) {
+          return res.status(403).json({
+            success: false,
+            message: 'Personal attendance is available only to an employee account linked to an employee record.',
+          });
+        }
+        if (req.user.permissions.includes('VIEW_ATTENDANCE')) {
+          const register = await buildRegister({
+            department: parsedIntent.query.department,
+            page: 1,
+            limit: 20,
+          });
+          return res.json({
+            success: true,
+            reply: `For ${register.date}, there are ${register.counts.totalEmployees} active employees. ${register.counts.PRESENT || 0} are present, ${register.counts.LATE || 0} are late, ${register.counts.WORK_FROM_HOME || 0} are working from home, and ${register.counts.MISSING_ATTENDANCE || 0} have unresolved attendance.`,
+            stats: Object.entries(register.counts).map(([label, value]) => ({ label: label.replaceAll('_', ' '), value })),
+            attendanceUrl: '/attendance',
+            suggestions,
+            intent: parsedIntent.intent,
+          });
+        }
+        return res.status(403).json({ success: false, message: 'You can only access your own attendance information.' });
+      }
+
+      if (parsedIntent.intent === 'ATTENDANCE_HISTORY' || parsedIntent.intent === 'ATTENDANCE_PERCENTAGE') {
+        const month = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+        }).format(new Date());
+        const history = await getOwnHistory({ user: req.user, month, limit: 100 });
+        return res.json({
+          success: true,
+          reply: parsedIntent.intent === 'ATTENDANCE_PERCENTAGE'
+            ? `Your attendance for ${history.month} is ${history.attendancePercentage}% (${history.presentEquivalentDays} present-equivalent days out of ${history.workingDays} eligible working days).`
+            : `You have ${history.total} attendance records for ${history.month}.`,
+          stats: [
+            { label: 'Attendance', value: `${history.attendancePercentage}%` },
+            { label: 'Present-equivalent days', value: history.presentEquivalentDays },
+            { label: 'Working days', value: history.workingDays },
+          ],
+          attendanceUrl: '/attendance',
+          suggestions,
+          intent: parsedIntent.intent,
+        });
+      }
+
+      const todayAttendance = await getToday(req.user);
+      const attendance = todayAttendance.attendance;
+      const timeZone = todayAttendance.policy.timezone;
+      const reply = parsedIntent.intent === 'WORKING_HOURS'
+        ? `You have worked ${Math.floor((attendance?.workingMinutes || 0) / 60)} hours and ${(attendance?.workingMinutes || 0) % 60} minutes today.`
+        : parsedIntent.intent === 'LATE_STATUS'
+          ? attendance?.isLate
+            ? `You checked in ${attendance.lateMinutes} minutes after the scheduled start time.`
+            : 'You were not recorded as late today.'
+          : parsedIntent.intent === 'OVERTIME'
+            ? `Recorded overtime today: ${attendance?.overtimeMinutes || 0} minutes.`
+            : attendance
+              ? `Your attendance today is ${attendance.status.replaceAll('_', ' ')}. Check-in: ${formatAttendanceTime(attendance.checkIn, timeZone)}; check-out: ${formatAttendanceTime(attendance.checkOut, timeZone)}.`
+              : 'No attendance record exists for today yet.';
       return res.json({
-        reply: `I found ${nonITEmployees.length} non-IT employees.`,
-        type: 'employee_list',
-        data: nonITEmployees,
-        employees: nonITEmployees,
+        success: true,
+        reply,
+        attendanceUrl: '/attendance',
+        stats: attendance ? [
+          { label: 'Status', value: attendance.status.replaceAll('_', ' ') },
+          { label: 'Worked', value: `${Math.floor((attendance.workingMinutes || 0) / 60)}h ${(attendance.workingMinutes || 0) % 60}m` },
+          { label: 'Late minutes', value: attendance.lateMinutes || 0 },
+          { label: 'Overtime minutes', value: attendance.overtimeMinutes || 0 },
+        ] : [],
         suggestions,
+        intent: parsedIntent.intent,
       });
     }
 
-    if (
-      lowerMessage.includes('how many it employees') ||
-      lowerMessage.includes('how many it') ||
-      lowerMessage.includes('count it employees') ||
-      lowerMessage.includes('number of it employees')
-    ) {
-      const itEmployees = getEmployeesByCategory('it');
-      return res.json({
-        reply: `There are ${itEmployees.length} IT employees.`,
-        type: 'statistics',
-        stats: [{ label: 'IT employees', value: itEmployees.length }],
-        employees: [],
-        suggestions,
-      });
-    }
-
-    if (
-      lowerMessage.includes('how many non it employees') ||
-      lowerMessage.includes('how many non-it employees') ||
-      lowerMessage.includes('count non it employees') ||
-      lowerMessage.includes('number of non it employees')
-    ) {
-      const nonITEmployees = getEmployeesByCategory('non-it');
-      return res.json({
-        reply: `There are ${nonITEmployees.length} non-IT employees.`,
-        type: 'statistics',
-        stats: [{ label: 'Non-IT employees', value: nonITEmployees.length }],
-        employees: [],
-        suggestions,
-      });
-    }
-
-    const departmentQueryPatterns = [
-      'employees in',
-      'employees from',
-      'show employees in',
-      'show employees from',
-      'who works in',
-      'staff in',
-      'people in',
+    const supportedDirectoryIntents = [
+      'OWN_PROFILE',
+      'COUNT_EMPLOYEES',
+      'SEARCH_SKILL',
+      'SEARCH_CATEGORY',
+      'SEARCH_DEPARTMENT',
+      'SEARCH_EMPLOYEES',
+      'EMPLOYEE_PROFILE',
+      'LIST_EMPLOYEES',
     ];
 
-    if (departmentQueryPatterns.some((pattern) => lowerMessage.includes(pattern))) {
-      const detectedDepartment = extractDepartment(lowerMessage);
-
-      if (detectedDepartment) {
-        const results = getEmployeesByDepartment(detectedDepartment);
-        return res.json({
-          reply: `Here are the ${detectedDepartment} employees.`,
-          type: 'employee_list',
-          data: results,
-          employees: results,
-          suggestions,
-        });
-      }
+    if (!supportedDirectoryIntents.includes(parsedIntent.intent)) {
+      return res.json({
+        success: true,
+        reply: "I can help search employee profiles, list teams, and count employees. Try “Find Alex”, “Show IT employees”, or “How many employees are in HR?”.",
+        type: 'text',
+        employees: [],
+        suggestions,
+        intent: parsedIntent.intent,
+      });
     }
 
-    const employeeNameMatch = lowerMessage.match(/(?:find|search|show|get|who is|who works in)\s+([a-zA-Z\s]+)/i);
-    const nameQuery = employeeNameMatch ? employeeNameMatch[1].trim() : '';
-
-    if ((lowerMessage.includes('find ') || lowerMessage.includes('search ') || lowerMessage.includes('show ') || lowerMessage.includes('who is ') || lowerMessage.includes('who works in ')) && nameQuery) {
-      const matchResults = searchEmployeesByName(nameQuery);
-
-      if (matchResults.length > 0) {
-        return res.json({
-          reply: `Employee found: ${matchResults[0].name}.`,
-          type: 'employee_profile',
-          data: matchResults,
-          employees: matchResults,
-          suggestions,
+    if (req.user.role === 'EMPLOYEE') {
+      if (parsedIntent.intent !== 'OWN_PROFILE') {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access your own employee profile.',
         });
       }
-    }
 
-    const idMatch = lowerMessage.match(/employee with id\s*(\d+)/i) || lowerMessage.match(/id\s*(\d+)/i);
-    if (idMatch) {
-      const employeeId = Number(idMatch[1]);
-      const employee = getEmployeeById(employeeId);
-
-      if (employee) {
-        return res.json({
-          reply: `Employee found: ${employee.name}.`,
-          type: 'employee_profile',
-          data: [employee],
-          employees: [employee],
-          suggestions,
+      if (!req.user.employeeRecordId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account is not linked to an employee profile yet. Contact HR to link your account.',
         });
       }
+
+      const employee = await findEmployee(req.user.employeeRecordId);
+      if (!employee) {
+        return res.status(404).json({
+          success: false,
+          message: 'Your linked employee profile could not be found. Contact HR for assistance.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        reply: 'Here is your employee profile.',
+        type: 'employee_profile',
+        employees: [toChatEmployee(employee)],
+        suggestions,
+        intent: parsedIntent.intent,
+      });
     }
+
+    const isCount = parsedIntent.intent === 'COUNT_EMPLOYEES';
+    const category = parsedIntent.query.category;
+    const department = parsedIntent.query.department;
+    const search = parsedIntent.query.search;
+    const skill = parsedIntent.query.skill;
+
+    const result = await queryEmployees({
+      page: 1,
+      limit: isCount ? 1 : parseLimit(req.body.limit),
+      search,
+      department,
+      employeeType: category,
+      skill,
+    });
+    const scopeName = department || category || (skill ? `${skill} skills` : search || 'matching filter');
+    const reply = isCount
+      ? department
+        ? `There ${result.total === 1 ? 'is' : 'are'} ${result.total} ${result.total === 1 ? 'employee' : 'employees'} in ${department}.`
+        : category
+          ? `There ${result.total === 1 ? 'is' : 'are'} ${result.total} ${category} ${result.total === 1 ? 'employee' : 'employees'}.`
+          : `There ${result.total} employees in total.`
+      : result.total
+        ? `I found ${result.total} ${result.total === 1 ? 'employee' : 'employees'}${scopeName ? ` for ${scopeName}` : ''}. Showing ${result.employees.length}.`
+        : `I couldn't find employees${scopeName ? ` for ${scopeName}` : ''}. Check the spelling or try a department, name, or skill.`;
 
     return res.json({
-      reply:
-        "I'm sorry, I couldn't understand that request. You can ask me things like:\n- Show IT employees\n- Show non-IT employees\n- Find Aaron\n- How many IT employees?\n- Show HR employees",
-      type: 'text',
+      success: true,
+      reply,
+      type: isCount ? 'statistics' : parsedIntent.intent === 'EMPLOYEE_PROFILE' ? 'employee_profile' : 'employee_list',
+      stats: isCount ? [{ label: scopeName, value: result.total }] : [],
+      employees: isCount ? [] : result.employees.map(toChatEmployee),
+      total: result.total,
+      hasMore: !isCount && result.total > result.employees.length,
+      directoryUrl: category === 'IT'
+        ? '/it-employees'
+        : category === 'Non-IT'
+          ? '/non-it-employees'
+          : department
+            ? `/employees?department=${encodeURIComponent(department)}`
+            : '/employees',
       suggestions,
-      employees: [],
+      intent: parsedIntent.intent,
     });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, message: error.message });
+    }
+    console.error('Chat request error:', error);
     return res.status(500).json({
       success: false,
       message: 'Server error while processing the chat request.',

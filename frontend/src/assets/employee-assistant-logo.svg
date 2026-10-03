@@ -1,0 +1,27 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shell" x1="74" y1="57" x2="252" y2="266" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A7F3FF"/>
+      <stop offset=".48" stop-color="#7B9AFF"/>
+      <stop offset="1" stop-color="#BA8BFF"/>
+    </linearGradient>
+    <linearGradient id="face" x1="105" y1="91" x2="219" y2="226" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#26365F"/>
+      <stop offset="1" stop-color="#11182F"/>
+    </linearGradient>
+    <linearGradient id="eyes" x1="119" y1="149" x2="211" y2="169" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6FF1FF"/>
+      <stop offset="1" stop-color="#B9A1FF"/>
+    </linearGradient>
+  </defs>
+  <path d="M151 58V43C151 31 161 21 173 21C185 21 195 31 195 43V58" stroke="url(#shell)" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="173" cy="20" r="10" fill="#A7F3FF"/>
+  <path d="M91 121C91 83 122 52 160 52H174C212 52 243 83 243 121V205C243 235 219 259 189 259H145C115 259 91 235 91 205V121Z" fill="url(#shell)"/>
+  <path d="M91 132H74C61 132 51 142 51 155V177C51 190 61 200 74 200H91V132ZM243 132H260C273 132 283 142 283 155V177C283 190 273 200 260 200H243V132Z" fill="url(#shell)"/>
+  <path d="M104 122C104 95 126 73 153 73H181C208 73 230 95 230 122V195C230 217 212 235 190 235H144C122 235 104 217 104 195V122Z" fill="url(#face)" stroke="#D9F8FF" stroke-opacity=".58" stroke-width="3"/>
+  <rect x="120" y="145" width="43" height="20" rx="10" fill="url(#eyes)"/>
+  <rect x="184" y="145" width="30" height="20" rx="10" fill="url(#eyes)"/>
+  <path d="M144 190C152 198 162 202 173 202C184 202 194 198 202 190" stroke="#A7F3FF" stroke-width="7" stroke-linecap="round"/>
+  <path d="M128 260V278M218 260V278M128 278H218" stroke="url(#shell)" stroke-width="11" stroke-linecap="round"/>
+  <circle cx="173" cy="278" r="8" fill="#A7F3FF"/>
+</svg>

@@ -2,7 +2,7 @@ const {
   getAllEmployees,
   getEmployeesByCategory,
   getEmployeesByDepartment,
-  getEmployeeById,
+  getDepartmentStats,
   queryEmployees,
   findEmployee,
   validateEmployee,
@@ -14,19 +14,28 @@ const {
 const { recordAudit } = require('../data/auditLogs');
 const { createEmployeePdf } = require('../services/pdfService');
 
+const filterEmployeeData = (employee, role) => {
+  if (!employee || role === 'ADMIN') return employee;
+  const { salary, ...permittedEmployeeData } = employee;
+  return permittedEmployeeData;
+};
+
+const filterEmployeesData = (employees, role) => employees.map((employee) => filterEmployeeData(employee, role));
+
 const normalizeDepartment = (department) => {
   if (!department) return '';
   return department.trim();
 };
 
-const getAllEmployeesController = (req, res) => {
+const getAllEmployeesController = async (req, res) => {
   try {
-    const result = queryEmployees(req.query);
+    const result = await queryEmployees(req.query);
 
     return res.json({
       success: true,
       count: result.total,
       ...result,
+      employees: filterEmployeesData(result.employees, req.user.role),
     });
   } catch (error) {
     res.status(500).json({
@@ -36,52 +45,68 @@ const getAllEmployeesController = (req, res) => {
   }
 };
 
-const createEmployeeController = (req, res) => {
-  const errors = validateEmployee(req.body || {});
-  if (Object.keys(errors).length) return res.status(400).json({ success: false, message: 'Validation failed.', errors });
-  if (hasDuplicate(req.body)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
-
-  const employee = createEmployee(req.body);
-  recordAudit({ req, action: 'EMPLOYEE_CREATED', employee, description: 'Employee created' });
-  return res.status(201).json({ success: true, employee, message: 'Employee created successfully.' });
-};
-
-const updateEmployeeController = (req, res) => {
-  const current = findEmployee(req.params.id);
-  if (!current) return res.status(404).json({ success: false, message: 'Employee not found.' });
-  const errors = validateEmployee({ ...current, ...req.body }, { partial: true });
-  if (Object.keys(errors).length) return res.status(400).json({ success: false, message: 'Validation failed.', errors });
-  if (hasDuplicate({ ...current, ...req.body }, req.params.id)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
-
-  const employee = updateEmployee(req.params.id, req.body);
-  recordAudit({ req, action: 'EMPLOYEE_UPDATED', employee, description: 'Employee updated' });
-  return res.json({ success: true, employee, message: 'Employee updated successfully.' });
-};
-
-const deleteEmployeeController = (req, res) => {
-  const current = findEmployee(req.params.id);
-  if (!current) return res.status(404).json({ success: false, message: 'Employee not found.' });
-  const employee = softDeleteEmployee(req.params.id, req.user.id);
-  recordAudit({ req, action: 'EMPLOYEE_DELETED', employee, description: 'Employee soft-deleted' });
-  return res.json({ success: true, employee, message: 'Employee deleted successfully.' });
-};
-
-const exportEmployeesPdfController = (req, res) => {
-  const result = queryEmployees({ ...req.query, page: 1, limit: 100000 });
-  recordAudit({ req, action: 'EMPLOYEE_PDF_EXPORTED', description: 'Employee PDF exported' });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'attachment; filename="company-ai-employees.pdf"');
-  return createEmployeePdf({ employees: result.employees, generatedBy: req.user.name, department: req.query.department }).pipe(res);
-};
-
-const getITEmployees = (req, res) => {
+const createEmployeeController = async (req, res) => {
   try {
-    const itEmployees = getEmployeesByCategory('it');
+    const errors = validateEmployee(req.body || {});
+    if (Object.keys(errors).length) return res.status(400).json({ success: false, message: 'Validation failed.', errors });
+    if (hasDuplicate(req.body)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
+
+    const employee = await createEmployee(req.body);
+    recordAudit({ req, action: 'EMPLOYEE_CREATED', employee, description: 'Employee created' });
+    return res.status(201).json({ success: true, employee, message: 'Employee created successfully.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Server error while creating the employee.' });
+  }
+};
+
+const updateEmployeeController = async (req, res) => {
+  try {
+    const current = await findEmployee(req.params.id);
+    if (!current) return res.status(404).json({ success: false, message: 'Employee not found.' });
+    const errors = validateEmployee({ ...current, ...req.body }, { partial: true });
+    if (Object.keys(errors).length) return res.status(400).json({ success: false, message: 'Validation failed.', errors });
+    if (hasDuplicate({ ...current, ...req.body }, req.params.id)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
+
+    const employee = await updateEmployee(req.params.id, req.body);
+    recordAudit({ req, action: 'EMPLOYEE_UPDATED', employee, description: 'Employee updated' });
+    return res.json({ success: true, employee, message: 'Employee updated successfully.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Server error while updating the employee.' });
+  }
+};
+
+const deleteEmployeeController = async (req, res) => {
+  try {
+    const current = await findEmployee(req.params.id);
+    if (!current) return res.status(404).json({ success: false, message: 'Employee not found.' });
+    const employee = await softDeleteEmployee(req.params.id, req.user.id);
+    recordAudit({ req, action: 'EMPLOYEE_DELETED', employee, description: 'Employee soft-deleted' });
+    return res.json({ success: true, employee, message: 'Employee deleted successfully.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Server error while deleting the employee.' });
+  }
+};
+
+const exportEmployeesPdfController = async (req, res) => {
+  try {
+    const result = await queryEmployees({ ...req.query, page: 1, limit: 100000 });
+    recordAudit({ req, action: 'EMPLOYEE_PDF_EXPORTED', description: 'Employee PDF exported' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="company-ai-employees.pdf"');
+    return createEmployeePdf({ employees: result.employees, generatedBy: req.user.name, department: req.query.department }).pipe(res);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Server error while exporting employee records.' });
+  }
+};
+
+const getITEmployees = async (req, res) => {
+  try {
+    const itEmployees = await getEmployeesByCategory('it');
 
     res.json({
       success: true,
       count: itEmployees.length,
-      employees: itEmployees,
+      employees: filterEmployeesData(itEmployees, req.user.role),
     });
   } catch (error) {
     res.status(500).json({
@@ -91,14 +116,14 @@ const getITEmployees = (req, res) => {
   }
 };
 
-const getNonITEmployees = (req, res) => {
+const getNonITEmployees = async (req, res) => {
   try {
-    const nonITEmployees = getEmployeesByCategory('non-it');
+    const nonITEmployees = await getEmployeesByCategory('non-it');
 
     res.json({
       success: true,
       count: nonITEmployees.length,
-      employees: nonITEmployees,
+      employees: filterEmployeesData(nonITEmployees, req.user.role),
     });
   } catch (error) {
     res.status(500).json({
@@ -108,18 +133,17 @@ const getNonITEmployees = (req, res) => {
   }
 };
 
-const getEmployeeByIdController = (req, res) => {
+const getEmployeeByIdController = async (req, res) => {
   try {
-    const employeeId = Number(req.params.id);
-
-    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+    const employeeId = String(req.params.id || '').trim();
+    if (!employeeId || employeeId.length > 100) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid employee ID. Please provide a valid positive number.',
+        message: 'Invalid employee ID.',
       });
     }
 
-    const employee = getEmployeeById(employeeId);
+    const employee = await findEmployee(employeeId);
 
     if (!employee) {
       return res.status(404).json({
@@ -130,7 +154,7 @@ const getEmployeeByIdController = (req, res) => {
 
     return res.json({
       success: true,
-      employee,
+      employee: filterEmployeeData(employee, req.user.role),
     });
   } catch (error) {
     return res.status(500).json({
@@ -140,7 +164,7 @@ const getEmployeeByIdController = (req, res) => {
   }
 };
 
-const getEmployeesByDepartmentController = (req, res) => {
+const getEmployeesByDepartmentController = async (req, res) => {
   try {
     const department = normalizeDepartment(req.params.department);
 
@@ -151,7 +175,7 @@ const getEmployeesByDepartmentController = (req, res) => {
       });
     }
 
-    const departmentEmployees = getEmployeesByDepartment(department);
+    const departmentEmployees = await getEmployeesByDepartment(department);
 
     if (departmentEmployees.length === 0) {
       return res.status(404).json({
@@ -164,12 +188,27 @@ const getEmployeesByDepartmentController = (req, res) => {
       success: true,
       department,
       count: departmentEmployees.length,
-      employees: departmentEmployees,
+      employees: filterEmployeesData(departmentEmployees, req.user.role),
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: 'Server error while retrieving department employees.',
+    });
+  }
+};
+
+const getDepartmentStatsController = async (req, res) => {
+  try {
+    const departments = (await getDepartmentStats())
+      .filter((item) => item.department)
+      .map((item) => ({ name: item.department, employeeCount: item.count }));
+
+    return res.json({ success: true, departments });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while retrieving department summaries.',
     });
   }
 };
@@ -180,6 +219,7 @@ module.exports = {
   getNonITEmployees,
   getEmployeeById: getEmployeeByIdController,
   getEmployeesByDepartment: getEmployeesByDepartmentController,
+  getDepartmentStats: getDepartmentStatsController,
   createEmployee: createEmployeeController,
   updateEmployee: updateEmployeeController,
   deleteEmployee: deleteEmployeeController,

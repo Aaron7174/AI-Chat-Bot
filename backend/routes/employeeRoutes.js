@@ -5,6 +5,7 @@ const {
   getNonITEmployees,
   getEmployeeById,
   getEmployeesByDepartment,
+  getDepartmentStats,
   createEmployee,
   updateEmployee,
   deleteEmployee,
@@ -24,6 +25,7 @@ router.put('/:id', requirePermission('ADMIN_EMPLOYEE_EDIT'), updateEmployee);
 router.delete('/:id', requirePermission('ADMIN_EMPLOYEE_DELETE'), deleteEmployee);
 router.get('/it', getITEmployees);
 router.get('/non-it', getNonITEmployees);
+router.get('/departments', getDepartmentStats);
 router.get('/departments/:department', getEmployeesByDepartment);
 router.get('/:id', getEmployeeById);
 

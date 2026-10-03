@@ -1,16 +1,8 @@
 const bcrypt = require('bcryptjs');
 const { ROLE_PERMISSIONS } = require('../config/permissions');
 
+// Development-only identities; replace with persisted users before production deployment.
 const developmentUsers = [
-  {
-    id: 'user-super-admin',
-    name: 'CompanyAI Super Admin',
-    email: 'superadmin@companyai.local',
-    password: 'SuperAdmin123!',
-    role: 'SUPER_ADMIN',
-    department: 'Admin',
-    employeeId: null,
-  },
   {
     id: 'user-admin',
     name: 'CompanyAI Admin',
@@ -27,15 +19,6 @@ const developmentUsers = [
     password: 'Hr123!',
     role: 'HR',
     department: 'HR',
-    employeeId: null,
-  },
-  {
-    id: 'user-manager',
-    name: 'CompanyAI Manager',
-    email: 'manager@companyai.local',
-    password: 'Manager123!',
-    role: 'MANAGER',
-    department: 'IT',
     employeeId: null,
   },
   {
@@ -67,14 +50,18 @@ const findUserById = (id) => developmentUsers.find((user) => user.id === id);
 
 const toPublicUser = (user) => {
   if (!user) return null;
+  const employee = user.employeeId && typeof user.employeeId === 'object' ? user.employeeId : null;
+  const id = user._id ? String(user._id) : user.id;
+
   return {
-    id: user.id,
+    id,
     name: user.name,
     email: user.email,
     role: user.role,
-    permissions: [...user.permissions],
-    department: user.department,
-    employeeId: user.employeeId,
+    permissions: [...(ROLE_PERMISSIONS[user.role] || [])],
+    department: employee?.department || user.department || null,
+    employeeId: employee?.employeeId || (user.employeeId && !employee ? String(user.employeeId) : null),
+    employeeRecordId: employee?._id ? String(employee._id) : null,
   };
 };
 

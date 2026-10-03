@@ -6,8 +6,8 @@ import { useAuth } from '../context/AuthContext';
 function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('Admin123!');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -36,8 +36,8 @@ function Login() {
         <p className="login-subtitle">Sign in to your AI-powered employee command center.</p>
 
         <form className="login-form" onSubmit={handleSubmit}>
-          <label htmlFor="username">Username or email</label>
-          <input id="username" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
+          <label htmlFor="username">Email or development username</label>
+          <input id="username" type="text" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
 
           <label htmlFor="password">Password</label>
           <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
@@ -50,8 +50,8 @@ function Login() {
         </form>
 
         <div className="demo-credentials">
-          <span>Development demo</span>
-          <strong>admin / Admin123!</strong>
+          <span>Use your account credentials</span>
+          <strong>Development fallback also accepts the documented demo accounts.</strong>
         </div>
       </section>
     </main>

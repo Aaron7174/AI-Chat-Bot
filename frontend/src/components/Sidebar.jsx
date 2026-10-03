@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 
 const menuItems = [
   { label: 'Dashboard', path: '/' },
+  { label: 'Analytics', path: '/analytics' },
   { label: 'All Employees', path: '/employees' },
   { label: 'IT Employees', path: '/it-employees' },
   { label: 'Non-IT Employees', path: '/non-it-employees' },
@@ -12,9 +13,15 @@ const menuItems = [
 
 function Sidebar({ isOpen, onClose }) {
   const { hasPermission } = useAuth();
-  const visibleItems = hasPermission('ADMIN_EMPLOYEE_VIEW')
-    ? [...menuItems, { label: 'Admin Management', path: '/admin/employees' }]
-    : menuItems;
+  const visibleItems = [
+    ...menuItems,
+    ...(hasPermission('VIEW_ATTENDANCE') || hasPermission('VIEW_OWN_ATTENDANCE')
+      ? [{ label: 'Attendance', path: '/attendance' }]
+      : []),
+    ...(hasPermission('ADMIN_EMPLOYEE_VIEW')
+      ? [{ label: 'Admin Management', path: '/admin/employees' }]
+      : []),
+  ];
 
   return (
     <aside className={`sidebar ${isOpen ? 'open' : ''}`}>

@@ -1,21 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import EmployeeTable from '../components/EmployeeTable';
+import DirectoryNav from '../components/DirectoryNav';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const departments = ['All Departments', 'IT', 'HR', 'Finance', 'Marketing', 'Sales', 'Operations', 'Engineering', 'Customer Support', 'Management', 'Administration', 'Security', 'Legal', 'R&D', 'Production'];
 const emptyForm = { employeeId: '', name: '', email: '', phone: '', department: '', designation: '', role: '', category: 'IT', employeeType: 'IT', manager: '', joiningDate: '', location: '', status: 'ACTIVE', skills: '', salary: '' };
 
-function Employees() {
+function Employees({ isAdminManagement = false }) {
   const { hasPermission } = useAuth();
-  const canManage = hasPermission('ADMIN_EMPLOYEE_VIEW');
-  const canCreate = hasPermission('ADMIN_EMPLOYEE_CREATE');
   const canEdit = hasPermission('ADMIN_EMPLOYEE_EDIT');
   const canDelete = hasPermission('ADMIN_EMPLOYEE_DELETE');
   const canExport = hasPermission('ADMIN_EMPLOYEE_EXPORT_PDF');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [employees, setEmployees] = useState([]);
   const [meta, setMeta] = useState({ page: 1, total: 0, totalPages: 1 });
-  const [filters, setFilters] = useState({ search: '', department: '', employeeType: '', status: '' });
+  const [filters, setFilters] = useState({ search: '', status: '' });
+  const departmentFilter = searchParams.get('department') || '';
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -24,23 +26,45 @@ function Employees() {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
-  const loadEmployees = async (page = 1) => {
-    setLoading(true);
+  const loadEmployees = useCallback(async (page = 1) => {
     try {
-      const response = await api.get('/employees', { params: { ...filters, page, limit: 20 } });
+      const response = await api.get('/employees', { params: { ...filters, department: departmentFilter, page, limit: 20 } });
       setEmployees(response.data.employees || []);
       setMeta(response.data);
       setError('');
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Unable to load employees.');
     } finally { setLoading(false); }
+  }, [departmentFilter, filters]);
+
+  useEffect(() => {
+    let active = true;
+    api.get('/employees', { params: { ...filters, department: departmentFilter, page: 1, limit: 20 } })
+      .then((response) => {
+        if (!active) return;
+        setEmployees(response.data.employees || []);
+        setMeta(response.data);
+        setError('');
+      })
+      .catch((requestError) => {
+        if (active) setError(requestError.response?.data?.message || 'Unable to load employees.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [departmentFilter, filters]);
+
+  const changeFilter = (field, value) => {
+    setLoading(true);
+    setFilters((current) => ({ ...current, [field]: value }));
   };
-
-  useEffect(() => { loadEmployees(1); }, [filters.search, filters.department, filters.employeeType, filters.status]);
-
-  const changeFilter = (field, value) => setFilters((current) => ({ ...current, [field]: value }));
+  const clearFilters = () => {
+    setLoading(true);
+    setFilters({ search: '', status: '' });
+    setSearchParams({});
+  };
   const changeForm = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
-  const openCreate = () => { setEditing(null); setForm(emptyForm); setModalOpen(true); setError(''); };
   const openEdit = (employee) => { setEditing(employee); setForm({ ...emptyForm, ...employee, employeeId: employee.id, designation: employee.designation || employee.role, skills: (employee.skills || []).join(', ') }); setModalOpen(true); setError(''); };
 
   const saveEmployee = async (event) => {
@@ -63,21 +87,27 @@ function Employees() {
 
   const exportPdf = async () => {
     try {
-      const response = await api.get('/employees/export/pdf', { params: filters, responseType: 'blob' });
+      const response = await api.get('/employees/export/pdf', { params: { ...filters, department: departmentFilter }, responseType: 'blob' });
       const url = URL.createObjectURL(response.data);
       const link = document.createElement('a'); link.href = url; link.download = 'company-ai-employees.pdf'; link.click(); URL.revokeObjectURL(url);
       setNotice('Employee PDF downloaded successfully.');
     } catch (requestError) { setError(requestError.response?.data?.message || 'Unable to export employees.'); }
   };
 
-  return <div className="page-container employee-management-page">
-    <div className="page-heading"><div><p className="eyebrow">DIRECTORY CONTROL</p><h2>Employee Management</h2><p>Search and manage active employees across every department.</p></div><div className="management-actions">{canExport && <button className="secondary-action" type="button" onClick={exportPdf}>Download PDF</button>}</div></div>
+  return <div className="page-container employee-management-page directory-page">
+    <div className="page-heading directory-heading"><div><p className="eyebrow">{isAdminManagement ? 'ADMINISTRATION' : 'PEOPLE DIRECTORY'}</p><h2>{isAdminManagement ? 'Admin Management' : 'All Employees'}</h2><p>{isAdminManagement ? 'Manage employee records and directory permissions.' : 'Search, filter, and browse employees across every department.'}</p></div><div className="management-actions">{canExport && <button className="secondary-action" type="button" onClick={exportPdf}>Download PDF</button>}</div></div>
+    <DirectoryNav />
     {notice && <div className="inline-notice success">{notice}</div>}
-    {error && <div className="inline-notice error">{error}</div>}
-    <div className="filter-bar management-filter-bar"><input value={filters.search} onChange={(event) => changeFilter('search', event.target.value)} placeholder="Search ID, name, email, phone, department..." /><select value={filters.department} onChange={(event) => changeFilter('department', event.target.value)}>{departments.map((department) => <option key={department} value={department === 'All Departments' ? '' : department}>{department}</option>)}</select><select value={filters.employeeType} onChange={(event) => changeFilter('employeeType', event.target.value)}><option value="">All Types</option><option value="IT">IT</option><option value="Non-IT">Non-IT</option></select><select value={filters.status} onChange={(event) => changeFilter('status', event.target.value)}><option value="">All Status</option><option value="INACTIVE">Inactive</option><option value="ON_LEAVE">On Leave</option></select></div>
-    <div className="management-summary"><strong>{meta.total || 0}</strong><span>Active employees matching filters</span></div>
-    <EmployeeTable employees={employees} loading={loading} canEdit={canEdit} canDelete={canDelete} onEdit={openEdit} onDelete={setDeleting} />
-    <div className="pagination"><button type="button" disabled={meta.page <= 1} onClick={() => loadEmployees(meta.page - 1)}>Previous</button><span>Page {meta.page || 1} of {meta.totalPages || 1}</span><button type="button" disabled={meta.page >= meta.totalPages} onClick={() => loadEmployees(meta.page + 1)}>Next</button></div>
+    {error && <div className="inline-notice error" role="alert">{error}</div>}
+    <div className="directory-toolbar all-employees-toolbar">
+      <label className="directory-search"><span aria-hidden="true">⌕</span><input value={filters.search} onChange={(event) => changeFilter('search', event.target.value)} placeholder="Search name, ID, email, or role" aria-label="Search employees" />{filters.search && <button type="button" onClick={() => changeFilter('search', '')} aria-label="Clear search">×</button>}</label>
+      <label className="directory-select"><span>Department</span><select value={departmentFilter} onChange={(event) => { setLoading(true); setSearchParams(event.target.value ? { department: event.target.value } : {}); }}>{departments.map((department) => <option key={department} value={department === 'All Departments' ? '' : department}>{department}</option>)}</select></label>
+      <label className="directory-select"><span>Status</span><select value={filters.status} onChange={(event) => changeFilter('status', event.target.value)}><option value="">Any status</option><option value="ACTIVE">Active</option><option value="ON_LEAVE">On leave</option><option value="INACTIVE">Inactive</option><option value="TERMINATED">Terminated</option></select></label>
+      {(filters.search || departmentFilter || filters.status) && <button className="directory-reset" type="button" onClick={clearFilters}>Clear filters</button>}
+    </div>
+    <div className="directory-results-line"><span>{loading ? 'Updating directory…' : `Showing ${employees.length} of ${meta.total || 0} employees`}</span><span>20 per page</span></div>
+    <EmployeeTable employees={employees} loading={loading} canEdit={isAdminManagement && canEdit} canDelete={isAdminManagement && canDelete} onEdit={openEdit} onDelete={setDeleting} />
+    <div className="directory-pagination"><button type="button" disabled={meta.page <= 1 || loading} onClick={() => { setLoading(true); loadEmployees(meta.page - 1); }}>← Previous</button><span>Page <strong>{meta.page || 1}</strong> of {meta.totalPages || 1}</span><button type="button" disabled={meta.page >= meta.totalPages || loading} onClick={() => { setLoading(true); loadEmployees(meta.page + 1); }}>Next →</button></div>
     {deleting && <div className="modal-backdrop"><div className="modal-panel"><h3>Delete Employee?</h3><p>Are you sure you want to delete <strong>{deleting.name}</strong> ({deleting.id}) from {deleting.department}?</p><div className="modal-actions"><button type="button" onClick={() => setDeleting(null)}>Cancel</button><button className="danger-action" type="button" onClick={deleteEmployee}>Delete Employee</button></div></div></div>}
     {modalOpen && <EmployeeFormModal form={form} editing={editing} onChange={changeForm} onSubmit={saveEmployee} onClose={() => setModalOpen(false)} />}
   </div>;
