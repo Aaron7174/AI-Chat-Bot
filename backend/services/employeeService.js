@@ -9,6 +9,16 @@ const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/
 
 const activeEmployees = () => employees.filter((employee) => !employee.isDeleted);
 
+const mongoEmployeeLookup = (id) => {
+  const identifier = String(id);
+  return {
+    $or: [
+      { employeeId: identifier },
+      ...(mongoose.Types.ObjectId.isValid(identifier) ? [{ _id: identifier }] : []),
+    ],
+  };
+};
+
 const normalizeMongoEmployee = (record = {}) => {
   const data = record.toObject ? record.toObject() : { ...record };
   const fallbackId = data.id ?? data.employeeId ?? (data._id ? String(data._id) : '');
@@ -31,6 +41,14 @@ const normalizeMongoEmployee = (record = {}) => {
 };
 
 const isMongoEnabled = () => Boolean(process.env.MONGODB_URI) && mongoose.connection.readyState === 1;
+
+const requirePersistentStorage = () => {
+  if (!isMongoEnabled()) {
+    const error = new Error('Employee changes require an active MongoDB connection.');
+    error.code = 'PERSISTENCE_UNAVAILABLE';
+    throw error;
+  }
+};
 
 const matchesEmployeeQuery = (employee, { search, department, employeeType, status, skill } = {}) => {
   const searchable = [
@@ -134,7 +152,7 @@ const findEmployee = async (id) => {
   if (isMongoEnabled()) {
     const employee = await Employee.findOne({
       isDeleted: { $ne: true },
-      $or: [{ _id: id }, { employeeId: String(id) }, { id: String(id) }],
+      ...mongoEmployeeLookup(id),
     });
     return employee ? normalizeMongoEmployee(employee) : null;
   }
@@ -153,7 +171,21 @@ const validateEmployee = (input, { partial = false } = {}) => {
   return errors;
 };
 
-const hasDuplicate = (input, id) => {
+const hasDuplicate = async (input, id) => {
+  if (isMongoEnabled()) {
+    const duplicateConditions = [];
+    if (input.employeeId) duplicateConditions.push({ employeeId: { $regex: `^${escapeRegExp(input.employeeId)}$`, $options: 'i' } });
+    if (input.email) duplicateConditions.push({ email: { $regex: `^${escapeRegExp(input.email)}$`, $options: 'i' } });
+    if (!duplicateConditions.length) return false;
+
+    const current = id ? await Employee.findOne(mongoEmployeeLookup(id)).select('_id') : null;
+
+    return Boolean(await Employee.exists({
+      ...(current ? { _id: { $ne: current._id } } : {}),
+      $or: duplicateConditions,
+    }));
+  }
+
   const active = activeEmployees();
   return active.some((employee) => (
     String(employee.id) !== String(id)
@@ -163,96 +195,88 @@ const hasDuplicate = (input, id) => {
 };
 
 const createEmployee = async (input) => {
-  if (isMongoEnabled()) {
-    const employeePayload = {
-      employeeId: input.employeeId || `EMP-${Date.now()}`,
-      name: input.name || `${input.firstName || ''} ${input.lastName || ''}`.trim() || 'New Employee',
-      fullName: input.fullName || input.name || `${input.firstName || ''} ${input.lastName || ''}`.trim(),
-      email: input.email,
-      phone: input.phone || '',
-      department: input.department,
-      designation: input.designation || input.role || '',
-      role: input.role || input.designation || '',
-      location: input.location || '',
-      joiningDate: input.joiningDate || new Date(),
-      employmentStatus: input.employmentStatus || input.status || 'ACTIVE',
-      status: input.status || input.employmentStatus || 'ACTIVE',
-      category: input.category || (input.department === 'IT' ? 'IT' : 'Non-IT'),
-      skills: Array.isArray(input.skills) ? input.skills : [],
-      experience: input.experience || '',
-      salary: Number(input.salary) || 0,
-      manager: input.manager || '',
-      projects: Array.isArray(input.projects) ? input.projects : [],
-      photo: input.photo || '',
-      attendance: input.attendance || { presentDays: 0, absentDays: 0, overtimeHours: 0 },
-      leave: input.leave || { totalLeaves: 0, usedLeaves: 0, balance: 0 },
-    };
-
-    const employee = await Employee.create(employeePayload);
-    return normalizeMongoEmployee(employee);
-  }
-
-  const nextId = Math.max(...employees.map((employee) => Number(employee.id) || 0), 0) + 1;
-  const employee = {
-    ...input,
-    id: nextId,
-    name: input.name || `${input.firstName || ''} ${input.lastName || ''}`.trim(),
+  requirePersistentStorage();
+  const employeePayload = {
+    employeeId: input.employeeId || `EMP-${Date.now()}`,
+    name: input.name || `${input.firstName || ''} ${input.lastName || ''}`.trim() || 'New Employee',
+    fullName: input.fullName || input.name || `${input.firstName || ''} ${input.lastName || ''}`.trim(),
+    email: input.email,
+    phone: input.phone || '',
+    department: input.department,
+    designation: input.designation || input.role || '',
+    role: input.role || input.designation || '',
+    location: input.location || '',
+    joiningDate: input.joiningDate || new Date(),
+    employmentStatus: input.employmentStatus || input.status || 'ACTIVE',
+    status: input.status || input.employmentStatus || 'ACTIVE',
+    category: input.category || (input.department === 'IT' ? 'IT' : 'Non-IT'),
     skills: Array.isArray(input.skills) ? input.skills : [],
-    status: input.status || 'ACTIVE',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    experience: input.experience || '',
+    salary: Number(input.salary) || 0,
+    manager: input.manager || '',
+    projects: Array.isArray(input.projects) ? input.projects : [],
+    photo: input.photo || '',
+    attendance: input.attendance || { presentDays: 0, absentDays: 0, overtimeHours: 0 },
+    leave: input.leave || { totalLeaves: 0, usedLeaves: 0, balance: 0 },
   };
-  employees.push(employee);
-  return employee;
+
+  const employee = await Employee.create(employeePayload);
+  return normalizeMongoEmployee(employee);
 };
 
 const updateEmployee = async (id, input) => {
-  if (isMongoEnabled()) {
-    const employee = await Employee.findOne({
-      isDeleted: { $ne: true },
-      $or: [{ _id: id }, { employeeId: String(id) }, { id: String(id) }],
-    });
-    if (!employee) return null;
-
-    Object.assign(employee, {
-      ...input,
-      name: input.name || employee.name,
-      fullName: input.fullName || input.name || employee.fullName || employee.name,
-      status: input.status || employee.status,
-      employmentStatus: input.employmentStatus || input.status || employee.employmentStatus,
-      updatedAt: new Date(),
-    });
-
-    await employee.save();
-    return normalizeMongoEmployee(employee);
-  }
-
-  const employee = activeEmployees().find((item) => String(item.id) === String(id));
+  requirePersistentStorage();
+  const employee = await Employee.findOne({ ...mongoEmployeeLookup(id), isDeleted: { $ne: true } });
   if (!employee) return null;
-  Object.assign(employee, input, { updatedAt: new Date().toISOString() });
-  if (!employee.name && (employee.firstName || employee.lastName)) employee.name = `${employee.firstName || ''} ${employee.lastName || ''}`.trim();
-  return employee;
+
+  const editableFields = [
+    'employeeId',
+    'name',
+    'fullName',
+    'email',
+    'phone',
+    'department',
+    'designation',
+    'role',
+    'location',
+    'joiningDate',
+    'employmentStatus',
+    'status',
+    'category',
+    'skills',
+    'experience',
+    'salary',
+    'manager',
+    'projects',
+    'photo',
+  ];
+  const changes = Object.fromEntries(editableFields
+    .filter((field) => Object.prototype.hasOwnProperty.call(input, field))
+    .map((field) => [field, input[field]]));
+
+  Object.assign(employee, {
+    ...changes,
+    name: input.name || employee.name,
+    fullName: input.fullName || input.name || employee.fullName || employee.name,
+    status: input.status || employee.status,
+    employmentStatus: input.employmentStatus || input.status || employee.employmentStatus,
+    updatedAt: new Date(),
+  });
+
+  await employee.save();
+  return normalizeMongoEmployee(employee);
 };
 
 const softDeleteEmployee = async (id, deletedBy) => {
-  if (isMongoEnabled()) {
-    const employee = await Employee.findOne({
-      isDeleted: { $ne: true },
-      $or: [{ _id: id }, { employeeId: String(id) }, { id: String(id) }],
-    });
-    if (!employee) return null;
-    await User.updateOne({ employeeId: employee._id }, { $set: { isActive: false } });
-    employee.isDeleted = true;
-    employee.status = 'DELETED';
-    employee.deletedBy = deletedBy;
-    await employee.save();
-    return normalizeMongoEmployee(employee);
-  }
-
-  const employee = activeEmployees().find((item) => String(item.id) === String(id));
+  requirePersistentStorage();
+  const employee = await Employee.findOne({ ...mongoEmployeeLookup(id), isDeleted: { $ne: true } });
   if (!employee) return null;
-  Object.assign(employee, { isDeleted: true, status: 'DELETED', deletedAt: new Date().toISOString(), deletedBy });
-  return employee;
+  await User.updateOne({ employeeId: employee._id }, { $set: { isActive: false } });
+  employee.isDeleted = true;
+  employee.status = 'DELETED';
+  employee.deletedBy = deletedBy;
+  await employee.save();
+  return normalizeMongoEmployee(employee);
 };
 
 const getAllEmployees = async () => {
@@ -309,7 +333,7 @@ const getEmployeeById = async (id) => {
   if (isMongoEnabled()) {
     const employee = await Employee.findOne({
       isDeleted: { $ne: true },
-      $or: [{ _id: id }, { employeeId: String(id) }, { id: String(id) }],
+      ...mongoEmployeeLookup(id),
     });
     return employee ? normalizeMongoEmployee(employee) : null;
   }
@@ -421,6 +445,7 @@ module.exports = {
   findEmployee,
   validateEmployee,
   hasDuplicate,
+  isMongoEnabled,
   createEmployee,
   updateEmployee,
   softDeleteEmployee,

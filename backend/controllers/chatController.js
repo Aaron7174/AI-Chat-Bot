@@ -1,16 +1,12 @@
 const {
-  findEmployee,
-  queryEmployees,
   getDepartmentStats,
 } = require('../services/employeeService');
 const { parseChatIntent } = require('../services/chatIntentService');
 const {
-  buildRegister,
-  checkIn,
-  checkOut,
-  getOwnHistory,
-  getToday,
-} = require('../services/attendanceService');
+  authorizeChatTool,
+  executeChatTool,
+  getChatTool,
+} = require('../services/chatToolRegistry');
 
 const suggestionsByRole = {
   ADMIN: [
@@ -44,11 +40,6 @@ const toChatEmployee = (employee) => ({
   skills: Array.isArray(employee.skills) ? employee.skills : [],
 });
 
-const parseLimit = (value) => {
-  const requested = Number(value);
-  return Number.isInteger(requested) ? Math.min(10, Math.max(1, requested)) : 5;
-};
-
 const formatAttendanceTime = (value, timeZone) => value
   ? new Intl.DateTimeFormat('en-IN', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(value))
   : 'not recorded';
@@ -65,16 +56,22 @@ const handleChatRequest = async (req, res) => {
     }
 
     if (req.body?.confirmAction) {
-      if (!req.user.permissions.includes('VIEW_OWN_ATTENDANCE')) {
-        return res.status(403).json({ success: false, message: 'You do not have permission to manage your attendance.' });
-      }
       const action = String(req.body.confirmAction).toUpperCase();
-      if (!['CHECK_IN', 'CHECK_OUT'].includes(action)) {
+      const tool = getChatTool(action);
+      if (!tool?.confirmationRequiredIntents?.includes(action)) {
         return res.status(400).json({ success: false, message: 'Unsupported attendance action.' });
       }
-      const attendance = action === 'CHECK_IN'
-        ? await checkIn({ user: req.user, source: 'CHATBOT', ipAddress: req.ip })
-        : await checkOut({ user: req.user, source: 'CHATBOT', ipAddress: req.ip });
+      const authorization = authorizeChatTool(tool, { intent: action, user: req.user, message: '' });
+      if (!authorization.allowed) {
+        return res.status(403).json({ success: false, message: authorization.message });
+      }
+      const attendance = await executeChatTool(tool, {
+        intent: action,
+        user: req.user,
+        ipAddress: req.ip,
+        authorization,
+        confirmed: true,
+      });
       return res.json({
         success: true,
         reply: action === 'CHECK_IN'
@@ -94,27 +91,62 @@ const handleChatRequest = async (req, res) => {
     }
 
     const suggestions = suggestionsByRole[req.user.role] || [];
+    const conversationalIntent = parseChatIntent(message);
+    if (conversationalIntent.intent === 'UNSUPPORTED_FEATURE') {
+      return res.json({
+        success: true,
+        reply: `I can't help with ${conversationalIntent.query.feature} yet because that feature is not available in this application. I haven't searched or changed any records. I can still help with supported employee directory and attendance tasks.`,
+        type: 'text',
+        employees: [],
+        suggestions,
+        intent: conversationalIntent.intent,
+      });
+    }
+
+    if (['GENERAL_CHAT', 'SYSTEM_HELP'].includes(conversationalIntent.intent)) {
+      const isEmployee = req.user.role === 'EMPLOYEE';
+      const reply = conversationalIntent.intent === 'GENERAL_CHAT'
+        ? `Hello${req.user.name ? `, ${req.user.name}` : ''}. I can help with your employee assistant tasks. What would you like to do?`
+        : isEmployee
+          ? 'I can show your linked employee profile and, when your account is connected to an employee record, your attendance. I can also explain how to use the available pages. Employee directory search, leave requests, voice, and notifications are not available for this account or in this app yet.'
+          : 'I can search employee profiles, teams, departments, and skills, count employees, and answer attendance questions allowed for your role. You can also review attendance and correction requests in the Attendance page. Leave requests, voice, and notifications are not available in this app yet.';
+
+      return res.json({
+        success: true,
+        reply,
+        type: 'text',
+        employees: [],
+        suggestions,
+        intent: conversationalIntent.intent,
+      });
+    }
+
     const departments = (await getDepartmentStats()).map((item) => item.department).filter(Boolean);
     const parsedIntent = parseChatIntent(message, departments);
-    const attendanceIntents = [
-      'CHECK_IN',
-      'CHECK_OUT',
-      'ATTENDANCE_CORRECTION',
-      'ATTENDANCE_TODAY',
-      'ATTENDANCE_HISTORY',
-      'ATTENDANCE_PERCENTAGE',
-      'WORKING_HOURS',
-      'LATE_STATUS',
-      'OVERTIME',
-      'DEPARTMENT_ATTENDANCE',
-      'MISSING_CHECKOUT',
-      'ATTENDANCE_UNRESOLVED',
-    ];
-    if (attendanceIntents.includes(parsedIntent.intent)) {
-      if (['CHECK_IN', 'CHECK_OUT'].includes(parsedIntent.intent)) {
-        if (!req.user.permissions.includes('VIEW_OWN_ATTENDANCE')) {
-          return res.status(403).json({ success: false, message: 'You do not have permission to manage your attendance.' });
-        }
+    if (parsedIntent.intent === 'CLARIFICATION') {
+      return res.json({
+        success: true,
+        reply: parsedIntent.clarification,
+        type: 'clarification',
+        employees: [],
+        suggestions,
+        intent: parsedIntent.intent,
+      });
+    }
+    const tool = getChatTool(parsedIntent.intent);
+    const authorization = tool
+      ? authorizeChatTool(tool, {
+        intent: parsedIntent.intent,
+        user: req.user,
+        message,
+      })
+      : null;
+    if (tool && !authorization.allowed) {
+      return res.status(403).json({ success: false, message: authorization.message });
+    }
+
+    if (tool?.domain === 'attendance') {
+      if (tool.confirmationRequiredIntents?.includes(parsedIntent.intent)) {
         return res.json({
           success: true,
           reply: `Please confirm that you want to ${parsedIntent.intent === 'CHECK_IN' ? 'check in' : 'check out'} now. The server will record the time when you confirm.`,
@@ -125,31 +157,27 @@ const handleChatRequest = async (req, res) => {
       }
 
       if (parsedIntent.intent === 'ATTENDANCE_CORRECTION') {
-        if (!req.user.permissions.includes('VIEW_OWN_ATTENDANCE')) {
-          return res.status(403).json({ success: false, message: 'You can only request corrections for your own attendance.' });
-        }
+        const correction = await executeChatTool(tool, {
+          intent: parsedIntent.intent,
+          user: req.user,
+          query: parsedIntent.query,
+          authorization,
+        });
         return res.json({
           success: true,
-          reply: 'I will not invent or directly edit a timestamp. Open Attendance to submit the date, requested check-in/check-out time, and reason for HR review.',
-          attendanceUrl: '/attendance',
+          reply: correction.reply,
+          attendanceUrl: correction.attendanceUrl,
           suggestions,
           intent: parsedIntent.intent,
         });
       }
 
       if (['DEPARTMENT_ATTENDANCE', 'MISSING_CHECKOUT', 'ATTENDANCE_UNRESOLVED'].includes(parsedIntent.intent)) {
-        if (!req.user.permissions.includes('VIEW_ATTENDANCE')) {
-          return res.status(403).json({ success: false, message: 'You can only access your own attendance information.' });
-        }
-        const register = await buildRegister({
-          department: parsedIntent.query.department,
-          status: parsedIntent.intent === 'MISSING_CHECKOUT'
-            ? 'MISSED_CHECKOUT'
-            : parsedIntent.intent === 'ATTENDANCE_UNRESOLVED'
-              ? 'MISSING_ATTENDANCE'
-              : undefined,
-          page: 1,
-          limit: 10,
+        const register = await executeChatTool(tool, {
+          intent: parsedIntent.intent,
+          query: parsedIntent.query,
+          user: req.user,
+          authorization,
         });
         const relevantRecords = parsedIntent.intent === 'DEPARTMENT_ATTENDANCE'
           ? register.records
@@ -179,42 +207,31 @@ const handleChatRequest = async (req, res) => {
         });
       }
 
-      const requestsOwnAttendance = req.user.role === 'EMPLOYEE' || /\b(my|mine|me|i|am i)\b/i.test(message);
-      const canReadOwnAttendance = req.user.permissions.includes('VIEW_OWN_ATTENDANCE')
-        && Boolean(req.user.employeeRecordId)
-        && requestsOwnAttendance;
-      if (!canReadOwnAttendance) {
-        if (requestsOwnAttendance) {
-          return res.status(403).json({
-            success: false,
-            message: 'Personal attendance is available only to an employee account linked to an employee record.',
-          });
-        }
-        if (req.user.permissions.includes('VIEW_ATTENDANCE')) {
-          const register = await buildRegister({
-            department: parsedIntent.query.department,
-            page: 1,
-            limit: 20,
-          });
-          return res.json({
-            success: true,
-            reply: `For ${register.date}, there are ${register.counts.totalEmployees} active employees. ${register.counts.PRESENT || 0} are present, ${register.counts.LATE || 0} are late, ${register.counts.WORK_FROM_HOME || 0} are working from home, and ${register.counts.MISSING_ATTENDANCE || 0} have unresolved attendance.`,
-            stats: Object.entries(register.counts).map(([label, value]) => ({ label: label.replaceAll('_', ' '), value })),
-            attendanceUrl: '/attendance',
-            suggestions,
-            intent: parsedIntent.intent,
-          });
-        }
-        return res.status(403).json({ success: false, message: 'You can only access your own attendance information.' });
+      if (authorization.scope === 'team') {
+        const register = await executeChatTool(tool, {
+          intent: parsedIntent.intent,
+          query: parsedIntent.query,
+          user: req.user,
+          authorization,
+        });
+        return res.json({
+          success: true,
+          reply: `For ${register.date}, there are ${register.counts.totalEmployees} active employees. ${register.counts.PRESENT || 0} are present, ${register.counts.LATE || 0} are late, ${register.counts.WORK_FROM_HOME || 0} are working from home, and ${register.counts.MISSING_ATTENDANCE || 0} have unresolved attendance.`,
+          stats: Object.entries(register.counts).map(([label, value]) => ({ label: label.replaceAll('_', ' '), value })),
+          attendanceUrl: '/attendance',
+          suggestions,
+          intent: parsedIntent.intent,
+        });
       }
 
       if (parsedIntent.intent === 'ATTENDANCE_HISTORY' || parsedIntent.intent === 'ATTENDANCE_PERCENTAGE') {
-        const month = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Kolkata',
-          year: 'numeric',
-          month: '2-digit',
-        }).format(new Date());
-        const history = await getOwnHistory({ user: req.user, month, limit: 100 });
+        const history = await executeChatTool(tool, {
+          intent: parsedIntent.intent,
+          user: req.user,
+          query: parsedIntent.query,
+          monthOffset: parsedIntent.query.monthOffset,
+          authorization,
+        });
         return res.json({
           success: true,
           reply: parsedIntent.intent === 'ATTENDANCE_PERCENTAGE'
@@ -231,7 +248,12 @@ const handleChatRequest = async (req, res) => {
         });
       }
 
-      const todayAttendance = await getToday(req.user);
+      const todayAttendance = await executeChatTool(tool, {
+        intent: parsedIntent.intent,
+        user: req.user,
+        query: parsedIntent.query,
+        authorization,
+      });
       const attendance = todayAttendance.attendance;
       const timeZone = todayAttendance.policy.timezone;
       const reply = parsedIntent.intent === 'WORKING_HOURS'
@@ -260,21 +282,10 @@ const handleChatRequest = async (req, res) => {
       });
     }
 
-    const supportedDirectoryIntents = [
-      'OWN_PROFILE',
-      'COUNT_EMPLOYEES',
-      'SEARCH_SKILL',
-      'SEARCH_CATEGORY',
-      'SEARCH_DEPARTMENT',
-      'SEARCH_EMPLOYEES',
-      'EMPLOYEE_PROFILE',
-      'LIST_EMPLOYEES',
-    ];
-
-    if (!supportedDirectoryIntents.includes(parsedIntent.intent)) {
+    if (tool?.domain !== 'employees') {
       return res.json({
         success: true,
-        reply: "I can help search employee profiles, list teams, and count employees. Try “Find Alex”, “Show IT employees”, or “How many employees are in HR?”.",
+        reply: parsedIntent.clarification || "I can help search employee profiles, list teams, and count employees. Try “Find Alex”, “Show IT employees”, or “How many employees are in HR?”.",
         type: 'text',
         employees: [],
         suggestions,
@@ -282,22 +293,13 @@ const handleChatRequest = async (req, res) => {
       });
     }
 
-    if (req.user.role === 'EMPLOYEE') {
-      if (parsedIntent.intent !== 'OWN_PROFILE') {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only access your own employee profile.',
-        });
-      }
-
-      if (!req.user.employeeRecordId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Your account is not linked to an employee profile yet. Contact HR to link your account.',
-        });
-      }
-
-      const employee = await findEmployee(req.user.employeeRecordId);
+    if (parsedIntent.intent === 'OWN_PROFILE') {
+      const { employee } = await executeChatTool(tool, {
+        intent: parsedIntent.intent,
+        query: parsedIntent.query,
+        user: req.user,
+        authorization,
+      });
       if (!employee) {
         return res.status(404).json({
           success: false,
@@ -321,13 +323,12 @@ const handleChatRequest = async (req, res) => {
     const search = parsedIntent.query.search;
     const skill = parsedIntent.query.skill;
 
-    const result = await queryEmployees({
-      page: 1,
-      limit: isCount ? 1 : parseLimit(req.body.limit),
-      search,
-      department,
-      employeeType: category,
-      skill,
+    const result = await executeChatTool(tool, {
+      intent: parsedIntent.intent,
+      query: parsedIntent.query,
+      user: req.user,
+      limit: req.body.limit,
+      authorization,
     });
     const scopeName = department || category || (skill ? `${skill} skills` : search || 'matching filter');
     const reply = isCount

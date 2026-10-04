@@ -594,6 +594,13 @@ const getOwnHistory = async (options) => {
   return getEmployeeHistory({ ...options, employeeId: String(employee._id) });
 };
 
+const getCompanyMonth = async (monthOffset = 0) => {
+  const policy = await getPolicy();
+  const currentMonth = formatDateKey(new Date(), policy.timezone).slice(0, 7);
+  const date = new Date(Date.UTC(Number(currentMonth.slice(0, 4)), Number(currentMonth.slice(5, 7)) - 1 + monthOffset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+};
+
 const getAnalytics = async ({ date }) => {
   const register = await buildRegister({ date, page: 1, limit: 100 });
   return { date: register.date, counts: register.counts, totalEmployees: register.counts.totalEmployees };
@@ -687,6 +694,7 @@ module.exports = {
   getAnalytics,
   getEmployeeHistory,
   getOwnHistory,
+  getCompanyMonth,
   getPolicy,
   getToday,
   listCorrections,

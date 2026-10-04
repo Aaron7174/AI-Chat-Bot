@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "AI Employee Assistant",
+  "short_name": "Employee AI",
+  "description": "AI-powered employee management and HR assistant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#090d14",
+  "background_color": "#090d14",
+  "icons": [
+    {
+      "src": "/icons/employee-ai-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/employee-ai-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/employee-ai-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

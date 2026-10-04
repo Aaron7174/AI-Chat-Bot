@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-function EmployeeTable({ employees, loading, canEdit = false, canDelete = false, onEdit, onDelete }) {
+function EmployeeTable({ employees, loading, canEdit = false, canDelete = false, centerActions = false, onEdit, onDelete }) {
   if (loading) {
     return <div className="empty-state">Loading employees...</div>;
   }
@@ -11,7 +11,7 @@ function EmployeeTable({ employees, loading, canEdit = false, canDelete = false,
 
   return (
     <div className="table-wrapper">
-      <table className="employee-table">
+      <table className={`employee-table${centerActions ? ' admin-actions-centered' : ''}`}>
         <thead>
           <tr>
             <th>ID</th>

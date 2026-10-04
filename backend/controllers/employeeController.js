@@ -14,6 +14,28 @@ const {
 const { recordAudit } = require('../data/auditLogs');
 const { createEmployeePdf } = require('../services/pdfService');
 
+const handleEmployeeMutationError = (res, error, action) => {
+  if (error.code === 'PERSISTENCE_UNAVAILABLE') {
+    return res.status(503).json({
+      success: false,
+      message: 'Employee changes cannot be saved because the database is unavailable. Reconnect MongoDB and try again.',
+    });
+  }
+  if (error.code === 11000) {
+    return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
+  }
+  if (error.name === 'ValidationError') {
+    return res.status(400).json({
+      success: false,
+      message: 'Employee data is invalid.',
+      errors: Object.fromEntries(Object.entries(error.errors || {}).map(([field, detail]) => [field, detail.message])),
+    });
+  }
+
+  console.error(`Employee ${action} failed.`, error);
+  return res.status(500).json({ success: false, message: `Server error while ${action} the employee.` });
+};
+
 const filterEmployeeData = (employee, role) => {
   if (!employee || role === 'ADMIN') return employee;
   const { salary, ...permittedEmployeeData } = employee;
@@ -49,13 +71,13 @@ const createEmployeeController = async (req, res) => {
   try {
     const errors = validateEmployee(req.body || {});
     if (Object.keys(errors).length) return res.status(400).json({ success: false, message: 'Validation failed.', errors });
-    if (hasDuplicate(req.body)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
+    if (await hasDuplicate(req.body)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
 
     const employee = await createEmployee(req.body);
     recordAudit({ req, action: 'EMPLOYEE_CREATED', employee, description: 'Employee created' });
     return res.status(201).json({ success: true, employee, message: 'Employee created successfully.' });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error while creating the employee.' });
+    return handleEmployeeMutationError(res, error, 'creating');
   }
 };
 
@@ -65,13 +87,13 @@ const updateEmployeeController = async (req, res) => {
     if (!current) return res.status(404).json({ success: false, message: 'Employee not found.' });
     const errors = validateEmployee({ ...current, ...req.body }, { partial: true });
     if (Object.keys(errors).length) return res.status(400).json({ success: false, message: 'Validation failed.', errors });
-    if (hasDuplicate({ ...current, ...req.body }, req.params.id)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
+    if (await hasDuplicate({ ...current, ...req.body }, req.params.id)) return res.status(409).json({ success: false, message: 'Employee ID or email already exists.' });
 
     const employee = await updateEmployee(req.params.id, req.body);
     recordAudit({ req, action: 'EMPLOYEE_UPDATED', employee, description: 'Employee updated' });
     return res.json({ success: true, employee, message: 'Employee updated successfully.' });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error while updating the employee.' });
+    return handleEmployeeMutationError(res, error, 'updating');
   }
 };
 
@@ -83,7 +105,7 @@ const deleteEmployeeController = async (req, res) => {
     recordAudit({ req, action: 'EMPLOYEE_DELETED', employee, description: 'Employee soft-deleted' });
     return res.json({ success: true, employee, message: 'Employee deleted successfully.' });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error while deleting the employee.' });
+    return handleEmployeeMutationError(res, error, 'deleting');
   }
 };
 

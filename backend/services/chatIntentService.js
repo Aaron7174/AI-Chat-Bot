@@ -25,6 +25,7 @@ const extractSearchTerm = (message) => {
   const term = match[1]
     .replace(/\b(employee|employees|profile|details|information|contact|please|named|called)\b/gi, ' ')
     .replace(/\b(show|give me|tell me about)\b/gi, ' ')
+    .replace(/\b(?:a|an|the|me)\b/gi, ' ')
     .replace(/['’]s\b/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -32,10 +33,60 @@ const extractSearchTerm = (message) => {
   return term.length >= 2 ? term : null;
 };
 
+const parseConversationalIntent = (message) => {
+  const text = normalizeText(message).replace(/[.!?]+$/, '').trim();
+  const greeting = /^(?:hi|hello|hey|good morning|good afternoon|good evening)(?:\s*,?\s*(?:how are you|how is it going))?$/;
+  const thanks = /^(?:thanks|thank you|thanks a lot|thank you so much|got it|understood)$/;
+
+  if (greeting.test(text)) {
+    return { intent: 'GENERAL_CHAT', query: {}, summary: 'respond to a greeting' };
+  }
+
+  if (thanks.test(text)) {
+    return { intent: 'GENERAL_CHAT', query: {}, summary: 'acknowledge the user' };
+  }
+
+  if (/\b(?:what can you do|how can you help|what can you help me with|what do you do|show (?:me )?help|chatbot help|supported questions)\b/.test(text)) {
+    return { intent: 'SYSTEM_HELP', query: {}, summary: 'explain supported assistant capabilities' };
+  }
+
+  return null;
+};
+
+const parseUnsupportedFeatureIntent = (message) => {
+  const text = normalizeText(message);
+  const unsupportedFeatures = [
+    { feature: 'leave management', pattern: /\b(?:leave balance|leave history|leave requests?|apply(?:ing)? for leave|cancel leave|leave status|leave days)\b/ },
+    { feature: 'salary and payroll assistance', pattern: /\b(?:salary|payroll|payslip|pay slip|compensation|salary impact)\b/ },
+    { feature: 'helpdesk tickets', pattern: /\b(?:help ?desk|support ticket|create (?:a )?ticket|ticket status|my tickets)\b/ },
+    { feature: 'announcements and notifications', pattern: /\b(?:announcement|notifications?|notify me)\b/ },
+    { feature: 'voice assistance', pattern: /\b(?:voice assistant|voice input|speak to|talk to the assistant|speech to text)\b/ },
+    { feature: 'company policy search', pattern: /\b(?:company policy|leave policy|policy document|knowledge base|employee handbook)\b/ },
+  ];
+  const match = unsupportedFeatures.find(({ pattern }) => pattern.test(text));
+
+  return match
+    ? { intent: 'UNSUPPORTED_FEATURE', query: { feature: match.feature }, summary: `explain that ${match.feature} is unavailable` }
+    : null;
+};
+
+const parseMonthOffset = (message) => {
+  const text = normalizeText(message);
+  if (/\b(?:last|previous|prior) month\b/.test(text)) return -1;
+  if (/\b(?:this|current) month\b/.test(text)) return 0;
+  return undefined;
+};
+
 const parseChatIntent = (message, departments = []) => {
   const originalMessage = String(message || '').trim();
   const lowerMessage = normalizeText(originalMessage);
+  const conversationalIntent = parseConversationalIntent(originalMessage);
+  if (conversationalIntent) return conversationalIntent;
+  const unsupportedFeatureIntent = parseUnsupportedFeatureIntent(originalMessage);
+  if (unsupportedFeatureIntent) return unsupportedFeatureIntent;
+
   const explicitDepartment = findDepartment(lowerMessage, departments);
+  const monthOffset = parseMonthOffset(lowerMessage);
   const category = /\bnon[\s-]?it\b/.test(lowerMessage)
     ? 'Non-IT'
     : /\b(?:it employees|it team|it staff|employees in it)\b/.test(lowerMessage)
@@ -57,10 +108,18 @@ const parseChatIntent = (message, departments = []) => {
     && !/\b(when|what|did i|have i|was i|am i|status|time|record|forgot|missed|correction|yesterday|last)\b/.test(lowerMessage)) {
     return { intent: 'CHECK_OUT', query: {}, summary: 'check out for today' };
   }
-  if (/\b(attendance percentage|attendance rate|attendance this month|attendance history)\b|\b(show my attendance|my attendance)(?:\s+(?:this month|history))?[?.!]*$/.test(lowerMessage)) {
+  if (/\b(?:can you|could you|please)\s+(?:check|show|tell me about)\s+(?:my|mine)\s+attendance\b/.test(lowerMessage)) {
+    return {
+      intent: 'CLARIFICATION',
+      query: {},
+      clarification: 'Is this about your own attendance today or your monthly attendance history?',
+      summary: 'clarify the attendance period',
+    };
+  }
+  if (/\b(attendance percentage|attendance rate|attendance (?:this|last|previous) month|attendance history|attendance records?)\b|\b(show my attendance|my attendance)(?:\s+(?:for\s+)?(?:this|current|last|previous) month|\s+history)?[?.!]*$/.test(lowerMessage)) {
     return {
       intent: /\bpercentage|rate\b/.test(lowerMessage) ? 'ATTENDANCE_PERCENTAGE' : 'ATTENDANCE_HISTORY',
-      query: { department: explicitDepartment },
+      query: { department: explicitDepartment, monthOffset },
       summary: 'view attendance history',
     };
   }
@@ -86,6 +145,16 @@ const parseChatIntent = (message, departments = []) => {
           ? 'LATE_STATUS'
           : 'ATTENDANCE_TODAY';
     return { intent, query: { department: explicitDepartment }, summary: 'view today’s attendance' };
+  }
+
+  if (/\b(attendance|check.?in|check.?out|work(?:ing)? hours)\b/.test(lowerMessage)
+    && /\b(?:did|does|has|have|show|check|tell|what|when|how|my|mine)\b/.test(lowerMessage)) {
+    return {
+      intent: 'CLARIFICATION',
+      query: {},
+      clarification: 'Is this about your own attendance today, your monthly attendance history, or the team attendance register?',
+      summary: 'clarify the attendance question',
+    };
   }
 
   if (/\b(my profile|my employee details|my employee profile|show my details)\b/.test(lowerMessage)) {
@@ -132,6 +201,15 @@ const parseChatIntent = (message, departments = []) => {
     }
   }
 
+  if (/\b(?:find|search(?:\s+for)?|look\s+up|who is|show|display|get|tell me about|profile of|details of)\b/.test(lowerMessage)) {
+    return {
+      intent: 'CLARIFICATION',
+      query: {},
+      clarification: 'Which employee, department, or skill should I look up?',
+      summary: 'ask for a directory search target',
+    };
+  }
+
   if (explicitDepartment && /\b(department|team|employees?)\b/.test(lowerMessage)) {
     return {
       intent: 'SEARCH_DEPARTMENT',
@@ -140,11 +218,19 @@ const parseChatIntent = (message, departments = []) => {
     };
   }
 
-  return { intent: 'UNKNOWN', query: {}, summary: 'unrecognized employee directory request' };
+  return {
+    intent: 'CLARIFICATION',
+    query: {},
+    clarification: 'I can look up employees, departments, skills, or supported attendance information. What would you like to know?',
+    summary: 'clarify an unsupported or ambiguous request',
+  };
 };
 
 module.exports = {
   parseChatIntent,
+  parseConversationalIntent,
+  parseUnsupportedFeatureIntent,
+  parseMonthOffset,
   extractSearchTerm,
   normalizeText,
 };

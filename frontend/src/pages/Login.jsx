@@ -31,7 +31,7 @@ function Login() {
     <main className="login-page">
       <section className="login-panel">
         <div className="login-brand-mark">◆</div>
-        <p className="login-eyebrow">COMPANY AI</p>
+        <p className="login-eyebrow">AI EMPLOYEE ASSISTANT</p>
         <h1>Welcome back</h1>
         <p className="login-subtitle">Sign in to your AI-powered employee command center.</p>
 

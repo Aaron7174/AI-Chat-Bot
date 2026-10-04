@@ -1,14 +1,15 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import employeeAiLogo from '../assets/employee-assistant-logo.svg';
 
 const menuItems = [
-  { label: 'Dashboard', path: '/' },
-  { label: 'Analytics', path: '/analytics' },
-  { label: 'All Employees', path: '/employees' },
-  { label: 'IT Employees', path: '/it-employees' },
-  { label: 'Non-IT Employees', path: '/non-it-employees' },
-  { label: 'Departments', path: '/departments' },
-  { label: 'Chatbot', path: '/chat' },
+  { label: 'Dashboard', path: '/', icon: '⌂' },
+  { label: 'Analytics', path: '/analytics', icon: '▥' },
+  { label: 'All Employees', path: '/employees', icon: '◉' },
+  { label: 'IT Employees', path: '/it-employees', icon: '◇' },
+  { label: 'Non-IT Employees', path: '/non-it-employees', icon: '◌' },
+  { label: 'Departments', path: '/departments', icon: '▦' },
+  { label: 'Chatbot', path: '/chat', icon: '✳' },
 ];
 
 function Sidebar({ isOpen, onClose }) {
@@ -16,20 +17,27 @@ function Sidebar({ isOpen, onClose }) {
   const visibleItems = [
     ...menuItems,
     ...(hasPermission('VIEW_ATTENDANCE') || hasPermission('VIEW_OWN_ATTENDANCE')
-      ? [{ label: 'Attendance', path: '/attendance' }]
+      ? [{ label: 'Attendance', path: '/attendance', icon: '◷' }]
       : []),
     ...(hasPermission('ADMIN_EMPLOYEE_VIEW')
-      ? [{ label: 'Admin Management', path: '/admin/employees' }]
+      ? [{ label: 'Admin Management', path: '/admin/employees', icon: '⚙' }]
       : []),
   ];
 
   return (
-    <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
+    <aside id="primary-sidebar" className={`sidebar ${isOpen ? 'open' : ''}`}>
       <div className="sidebar-header">
-        <h2>EMPLOYEE AI</h2>
+        <div className="sidebar-brand-mark">
+          <img src={employeeAiLogo} alt="Employee AI logo" />
+        </div>
+        <div className="sidebar-brand-copy">
+          <h2>EMPLOYEE AI</h2>
+          <span>WORKFORCE INTELLIGENCE</span>
+        </div>
       </div>
 
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" aria-label="Main navigation">
+        <span className="sidebar-nav-label">WORKSPACE</span>
         {visibleItems.map((item) => (
           <NavLink
             key={item.path}
@@ -37,7 +45,8 @@ function Sidebar({ isOpen, onClose }) {
             className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
             onClick={onClose}
           >
-            {item.label}
+            <span className="nav-item-icon" aria-hidden="true">{item.icon}</span>
+            <span>{item.label}</span>
           </NavLink>
         ))}
       </nav>

@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { BrowserRouter as Router, Navigate, Routes, Route, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
+import MobileNavigation from './components/MobileNavigation';
+import PwaControls from './components/PwaControls';
 import Dashboard from './pages/Dashboard';
 import Analytics from './pages/Analytics';
 import Employees from './pages/Employees';
@@ -16,20 +19,32 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PermissionRoute from './components/PermissionRoute';
 import './App.css';
 
-import { useState } from 'react';
-
 function AppLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [openSidebarPath, setOpenSidebarPath] = useState(null);
   const { logout } = useAuth();
   const location = useLocation();
+  const sidebarOpen = openSidebarPath === location.pathname;
   const isChatPage = location.pathname === '/chat';
 
   return (
     <div className={`app-shell${isChatPage ? ' chat-layout' : ''}`}>
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar isOpen={sidebarOpen} onClose={() => setOpenSidebarPath(null)} />
+      {sidebarOpen && (
+        <button
+          className="sidebar-backdrop"
+          type="button"
+          aria-label="Close navigation menu"
+          onClick={() => setOpenSidebarPath(null)}
+        />
+      )}
 
       <div className="main-panel">
-        <Navbar onMenuToggle={() => setSidebarOpen((prev) => !prev)} title="Employee AI" onLogout={logout} />
+        <Navbar
+          onMenuToggle={() => setOpenSidebarPath(sidebarOpen ? null : location.pathname)}
+          isMenuOpen={sidebarOpen}
+          title="Employee AI"
+          onLogout={logout}
+        />
 
         <main className={`content-area${isChatPage ? ' chat-content-area' : ''}`}>
           <Routes>
@@ -47,6 +62,7 @@ function AppLayout() {
           </Routes>
         </main>
       </div>
+      <MobileNavigation onNavigate={() => setOpenSidebarPath(null)} />
     </div>
   );
 }
@@ -59,10 +75,13 @@ function AppRoutes() {
       <AppLayout />
     </ProtectedRoute>
   ) : (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
-    </Routes>
+    <div className="login-app-shell">
+      <div className="login-pwa-toolbar"><PwaControls /></div>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </div>
   );
 }
 
